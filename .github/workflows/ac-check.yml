@@ -94,6 +94,11 @@ jobs:
             --allow-tool write \
             --no-ask-user \
             2>&1 | tee copilot-output.log
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            echo "::error::Copilot CLI exited with status $status — see copilot-output.log artifact"
+            exit "$status"
+          fi
           if [ ! -f ac-report.md ]; then
             echo "::error::Agent did not produce ac-report.md — see copilot-output.log artifact"
             exit 1
