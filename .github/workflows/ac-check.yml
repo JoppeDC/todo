@@ -15,7 +15,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  JIRA_BASE_URL: https://clearfacts.atlassian.net
+  JIRA_BASE_URL: https://codabox.atlassian.net
 
 jobs:
   ac-check:
@@ -31,11 +31,9 @@ jobs:
         env:
           BRANCH: ${{ github.head_ref || github.ref_name }}
         run: |
-          key=$(grep -oE 'CLEARFACTS-[0-9]+' <<< "$BRANCH" | head -1 || true)
-          if [ -z "$key" ]; then
-            echo "::error::No CLEARFACTS ticket id found in branch name '$BRANCH'"
-            exit 1
-          fi
+          # The branch name is the ticket key (e.g. CLEARFACTS-1234). Use it verbatim,
+          # uppercased so the Jira API lookup is case-insensitive to the branch casing.
+          key=$(printf '%s' "$BRANCH" | tr '[:lower:]' '[:upper:]')
           echo "key=$key" >> "$GITHUB_OUTPUT"
 
       - name: Fetch JIRA ticket
