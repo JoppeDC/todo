@@ -1,0 +1,148 @@
+name: AC Check
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+  copilot-requests: write
+
+concurrency:
+  group: ac-check-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  JIRA_BASE_URL: https://clearfacts.atlassian.net
+
+jobs:
+  ac-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract ticket id
+        id: ticket
+        env:
+          BRANCH: ${{ github.head_ref || github.ref_name }}
+        run: |
+          key=$(grep -oE 'CLEARFACTS-[0-9]+' <<< "$BRANCH" | head -1 || true)
+          if [ -z "$key" ]; then
+            echo "::error::No CLEARFACTS ticket id found in branch name '$BRANCH'"
+            exit 1
+          fi
+          echo "key=$key" >> "$GITHUB_OUTPUT"
+
+      - name: Fetch JIRA ticket
+        id: jira
+        env:
+          JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
+          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+          TICKET: ${{ steps.ticket.outputs.key }}
+        run: |
+          status=$(curl -sS -u "$JIRA_EMAIL:$JIRA_API_TOKEN" \
+            -o ticket.json -w "%{http_code}" \
+            "$JIRA_BASE_URL/rest/api/2/issue/$TICKET?fields=summary,description,customfield_10038")
+          if [ "$status" != "200" ]; then
+            echo "::error::JIRA returned HTTP $status for $TICKET"
+            exit 1
+          fi
+          jq -r '"# \(.key) — \(.fields.summary)\n\n## Description\n\n\(.fields.description // "_empty_")\n\n## Technical Analysis\n\n\(.fields.customfield_10038 // "_empty_")"' \
+            ticket.json > ticket.md
+          content=$(jq -r '(.fields.description // "") + (.fields.customfield_10038 // "")' ticket.json)
+          echo "has_content=$([ -n "$content" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
+      - name: Compute diff against base
+        id: diff
+        env:
+          BASE: ${{ github.base_ref || 'main' }}
+        run: |
+          git diff "origin/$BASE...HEAD" > diff.patch
+          git diff --name-status "origin/$BASE...HEAD" > files.txt
+          echo "has_diff=$([ -s diff.patch ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
+      - name: Nothing to check
+        if: steps.jira.outputs.has_content != 'true' || steps.diff.outputs.has_diff != 'true'
+        env:
+          TICKET: ${{ steps.ticket.outputs.key }}
+          HAS_CONTENT: ${{ steps.jira.outputs.has_content }}
+        run: |
+          {
+            echo "## AC Check — $TICKET"
+            if [ "$HAS_CONTENT" != "true" ]; then
+              echo "Ticket has no description or technical analysis — nothing to check against."
+            else
+              echo "No changes against the base branch — nothing to check."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Install Copilot CLI
+        if: steps.jira.outputs.has_content == 'true' && steps.diff.outputs.has_diff == 'true'
+        run: npm install -g @github/copilot
+
+      - name: Run AC check agent
+        if: steps.jira.outputs.has_content == 'true' && steps.diff.outputs.has_diff == 'true'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          COPILOT_GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          copilot -p "$(cat .github/ac-check/prompt.md)" \
+            --allow-tool 'shell(git:*)' \
+            --allow-tool write \
+            --no-ask-user \
+            2>&1 | tee copilot-output.log
+          if [ ! -f ac-report.md ]; then
+            echo "::error::Agent did not produce ac-report.md — see copilot-output.log artifact"
+            exit 1
+          fi
+
+      - name: Publish job summary
+        if: steps.jira.outputs.has_content == 'true' && steps.diff.outputs.has_diff == 'true'
+        env:
+          TICKET: ${{ steps.ticket.outputs.key }}
+        run: |
+          {
+            echo "## AC Check — [$TICKET]($JIRA_BASE_URL/browse/$TICKET)"
+            echo
+            cat ac-report.md
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Post sticky PR comment
+        if: github.event_name == 'pull_request' && steps.jira.outputs.has_content == 'true' && steps.diff.outputs.has_diff == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          TICKET: ${{ steps.ticket.outputs.key }}
+        run: |
+          marker="<!-- ac-check-report -->"
+          {
+            echo "$marker"
+            echo "## 🤖 AC Check — [$TICKET]($JIRA_BASE_URL/browse/$TICKET)"
+            echo
+            cat ac-report.md
+          } > comment.md
+          cid=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR/comments" --paginate \
+            --jq ".[] | select(.body | startswith(\"$marker\")) | .id" | head -1)
+          if [ -n "$cid" ]; then
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$cid" -F body=@comment.md
+          else
+            gh api -X POST "repos/$GITHUB_REPOSITORY/issues/$PR/comments" -F body=@comment.md
+          fi
+
+      - name: Upload debug artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ac-check-${{ github.run_id }}
+          path: |
+            ticket.md
+            diff.patch
+            files.txt
+            ac-report.md
+            copilot-output.log
+          if-no-files-found: ignore
