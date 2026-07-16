@@ -72,7 +72,7 @@ function App() {
             {[
               ['all', 'All'],
               ['open', 'Open'],
-              ['closed', 'Closed'],
+              ['finished', 'Finished'],
             ].map(([value, label]) => (
               <button
                 className={filter === value ? 'selected' : ''}
