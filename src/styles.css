@@ -47,6 +47,11 @@ h1 { margin: 0; font-family: 'Playfair Display', Georgia, serif; font-size: clam
 .new-todo input::placeholder { color: #899288; }
 .new-todo button { flex: 0 0 auto; border: 0; border-radius: 8px; padding: 0 18px; color: #fffefa; background: #3f5e4b; }
 .new-todo button:hover { background: #2e4939; }
+.unlock-form { flex-direction: column; align-items: stretch; }
+.unlock-form label { font-size: 0.9rem; line-height: 1.5; }
+.unlock-form button { min-height: 44px; }
+.unlock-error { margin: 0; padding: 0 24px 18px; color: #a43f35; font-size: 0.86rem; }
+.forget { margin: 0 24px 24px; }
 
 .list-toolbar { padding: 0 clamp(20px, 5vw, 36px) 12px; color: #6b7469; font-size: 0.71rem; }
 .list-toolbar p { margin: 0; }
