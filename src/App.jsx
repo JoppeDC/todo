@@ -3,16 +3,17 @@ import { useMemo, useState } from 'react'
 function App() {
   const [todos, setTodos] = useState([])
   const [newTodo, setNewTodo] = useState('')
-  const [filter, setFilter] = useState('open')
+  const [filter, setFilter] = useState('all')
 
   const activeCount = useMemo(
     () => todos.filter((todo) => !todo.completed).length,
     [todos],
   )
 
-  const visibleTodos = todos.filter((todo) =>
-    filter === 'open' ? !todo.completed : todo.completed,
-  )
+  const visibleTodos = todos.filter((todo) => {
+    if (filter === 'all') return true
+    return filter === 'open' ? !todo.completed : todo.completed
+  })
 
   function addTodo(event) {
     event.preventDefault()
@@ -69,6 +70,7 @@ function App() {
           <p>{activeCount === 1 ? '1 thing left' : `${activeCount} things left`}</p>
           <div className="filters" aria-label="Filter tasks">
             {[
+              ['all', 'All'],
               ['open', 'Open'],
               ['closed', 'Closed'],
             ].map(([value, label]) => (
