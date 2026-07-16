@@ -34,9 +34,14 @@ jobs:
         env:
           BRANCH: ${{ github.head_ref || github.ref_name }}
         run: |
-          # The branch name is the ticket key (e.g. CLEARFACTS-1234). Use it verbatim,
+          # The branch name starts with or contains the ticket key (e.g. CLEARFACTS-1234,
+          # TEST-123-import-x, feature/TEST-123). Take the first ABC-123-shaped token,
           # uppercased so the Jira API lookup is case-insensitive to the branch casing.
-          key=$(printf '%s' "$BRANCH" | tr '[:lower:]' '[:upper:]')
+          key=$(printf '%s' "$BRANCH" | tr '[:lower:]' '[:upper:]' | grep -oE '[A-Z][A-Z0-9]+-[0-9]+' | head -1 || true)
+          if [ -z "$key" ]; then
+            echo "::error::No Jira ticket key (e.g. ABC-123) found in branch name '$BRANCH'"
+            exit 1
+          fi
           echo "key=$key" >> "$GITHUB_OUTPUT"
 
       - name: Fetch JIRA ticket
@@ -116,6 +121,11 @@ jobs:
         run: |
           node .github/ac-check/validate-report.mjs copilot-response.txt ac-report.md files.txt
           echo "has_report=true" >> "$GITHUB_OUTPUT"
+          if grep -q '^🟢 ' ac-report.md; then
+            echo "all_met=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "all_met=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Publish job summary
         if: steps.report.outputs.has_report == 'true'
@@ -153,9 +163,15 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+      - name: Enforce acceptance criteria
+        if: steps.report.outputs.has_report == 'true' && steps.report.outputs.all_met != 'true'
+        run: |
+          echo "::error::Not all acceptance criteria are met — see the AC Check report"
+          exit 1
+
   comment:
     needs: analyze
-    if: github.event_name == 'pull_request' && needs.analyze.outputs.has_report == 'true'
+    if: always() && github.event_name == 'pull_request' && needs.analyze.outputs.has_report == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
