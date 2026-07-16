@@ -1,6 +1,6 @@
 import fs from 'node:fs'
 
-const [inputPath = 'ac-result.json', outputPath = 'ac-report.md', filesPath = 'files.txt'] = process.argv.slice(2)
+const [inputPath = 'copilot-response.txt', outputPath = 'ac-report.md', filesPath = 'files.txt'] = process.argv.slice(2)
 
 function fail(message) {
   console.error(`::error::Invalid AC report: ${message}`)
@@ -42,15 +42,29 @@ function changedFiles(path) {
   return files
 }
 
-let result
-try {
-  result = JSON.parse(fs.readFileSync(inputPath, 'utf8'))
-} catch (error) {
-  fail(`could not parse ${inputPath} as JSON: ${error.message}`)
+function parseResult(path) {
+  const content = fs.readFileSync(path, 'utf8').trim()
+
+  try {
+    return JSON.parse(content)
+  } catch (directError) {
+    const jsonBlocks = [...content.matchAll(/```json\s*([\s\S]*?)```/giu)]
+    if (jsonBlocks.length !== 1) {
+      fail(`${path} must be pure JSON or contain exactly one fenced JSON block`)
+    }
+
+    try {
+      return JSON.parse(jsonBlocks[0][1].trim())
+    } catch (blockError) {
+      fail(`could not parse the fenced JSON block in ${path}: ${blockError.message}`)
+    }
+  }
 }
 
+const result = parseResult(inputPath)
+
 requireKeys(result, ['summary', 'criteria', 'bugs', 'risks'], 'root')
-requireString(result.summary, 'summary', 180)
+requireString(result.summary, 'summary', 240)
 
 if (!Array.isArray(result.criteria) || result.criteria.length < 1 || result.criteria.length > 12) {
   fail('criteria must contain between 1 and 12 items')
