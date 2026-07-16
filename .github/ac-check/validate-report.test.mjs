@@ -8,13 +8,13 @@ import { fileURLToPath } from 'node:url'
 
 const validator = fileURLToPath(new URL('./validate-report.mjs', import.meta.url))
 
-function validate(result, files = 'M\tsrc/App.jsx\n') {
+function validateRaw(rawResult, files = 'M\tsrc/App.jsx\n') {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'ac-report-'))
   const input = path.join(directory, 'result.json')
   const output = path.join(directory, 'report.md')
   const changedFiles = path.join(directory, 'files.txt')
 
-  fs.writeFileSync(input, JSON.stringify(result))
+  fs.writeFileSync(input, rawResult)
   fs.writeFileSync(changedFiles, files)
 
   const processResult = spawnSync(process.execPath, [validator, input, output, changedFiles], {
@@ -25,6 +25,10 @@ function validate(result, files = 'M\tsrc/App.jsx\n') {
     ...processResult,
     report: fs.existsSync(output) ? fs.readFileSync(output, 'utf8') : '',
   }
+}
+
+function validate(result, files = 'M\tsrc/App.jsx\n') {
+  return validateRaw(JSON.stringify(result), files)
 }
 
 function validResult(overrides = {}) {
@@ -100,4 +104,20 @@ test('rejects a bug attributed to an unchanged file', () => {
 
   assert.notEqual(result.status, 0)
   assert.match(result.stderr, /not present/u)
+})
+
+test('extracts one fenced JSON result from agent narration', () => {
+  const rawResult = `I will inspect the supplied files.\n\n\`\`\`javascript\nconst example = true\n\`\`\`\n\n\`\`\`json\n${JSON.stringify(validResult(), null, 2)}\n\`\`\``
+  const result = validateRaw(rawResult)
+
+  assert.equal(result.status, 0, result.stderr)
+  assert.match(result.report, /^🟢 /u)
+})
+
+test('rejects ambiguous output with multiple fenced JSON results', () => {
+  const json = JSON.stringify(validResult())
+  const result = validateRaw(`\`\`\`json\n${json}\n\`\`\`\n\`\`\`json\n${json}\n\`\`\``)
+
+  assert.notEqual(result.status, 0)
+  assert.match(result.stderr, /exactly one fenced JSON block/u)
 })

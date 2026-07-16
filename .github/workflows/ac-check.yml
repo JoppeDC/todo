@@ -102,7 +102,7 @@ jobs:
             --no-custom-instructions \
             --no-remote \
             --no-remote-export \
-            > ac-result.json 2> copilot-output.log
+            > copilot-response.txt 2> copilot-output.log
           status=$?
           set -e
           if [ "$status" -ne 0 ]; then
@@ -114,7 +114,7 @@ jobs:
         id: report
         if: steps.jira.outputs.has_content == 'true' && steps.diff.outputs.has_diff == 'true'
         run: |
-          node .github/ac-check/validate-report.mjs ac-result.json ac-report.md files.txt
+          node .github/ac-check/validate-report.mjs copilot-response.txt ac-report.md files.txt
           echo "has_report=true" >> "$GITHUB_OUTPUT"
 
       - name: Publish job summary
@@ -147,7 +147,7 @@ jobs:
             ticket.md
             diff.patch
             files.txt
-            ac-result.json
+            copilot-response.txt
             ac-report.md
             copilot-output.log
           if-no-files-found: ignore
