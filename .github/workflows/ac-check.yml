@@ -5,11 +5,6 @@ on:
     types: [opened, synchronize, reopened]
   workflow_dispatch:
 
-permissions:
-  contents: read
-  pull-requests: write
-  copilot-requests: write
-
 concurrency:
   group: ac-check-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
@@ -18,13 +13,21 @@ env:
   JIRA_BASE_URL: https://codabox.atlassian.net
 
 jobs:
-  ac-check:
+  analyze:
+    name: ac-check
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: read
+      copilot-requests: write
+    outputs:
+      ticket: ${{ steps.ticket.outputs.key }}
+      has_report: ${{ steps.report.outputs.has_report }}
     steps:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Extract ticket id
         id: ticket
@@ -89,23 +92,33 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           COPILOT_GITHUB_TOKEN: ${{ github.token }}
         run: |
+          set +e
           copilot -p "$(cat .github/ac-check/prompt.md)" \
-            --allow-tool 'shell(git:*)' \
-            --allow-tool write \
+            -s \
+            --available-tools='view,grep,glob' \
+            --disable-builtin-mcps \
             --no-ask-user \
-            2>&1 | tee copilot-output.log
-          status=${PIPESTATUS[0]}
+            --no-auto-update \
+            --no-custom-instructions \
+            --no-remote \
+            --no-remote-export \
+            > ac-result.json 2> copilot-output.log
+          status=$?
+          set -e
           if [ "$status" -ne 0 ]; then
             echo "::error::Copilot CLI exited with status $status — see copilot-output.log artifact"
             exit "$status"
           fi
-          if [ ! -f ac-report.md ]; then
-            echo "::error::Agent did not produce ac-report.md — see copilot-output.log artifact"
-            exit 1
-          fi
+
+      - name: Validate and render report
+        id: report
+        if: steps.jira.outputs.has_content == 'true' && steps.diff.outputs.has_diff == 'true'
+        run: |
+          node .github/ac-check/validate-report.mjs ac-result.json ac-report.md files.txt
+          echo "has_report=true" >> "$GITHUB_OUTPUT"
 
       - name: Publish job summary
-        if: steps.jira.outputs.has_content == 'true' && steps.diff.outputs.has_diff == 'true'
+        if: steps.report.outputs.has_report == 'true'
         env:
           TICKET: ${{ steps.ticket.outputs.key }}
         run: |
@@ -115,12 +128,50 @@ jobs:
             cat ac-report.md
           } >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Upload report
+        if: steps.report.outputs.has_report == 'true'
+        uses: actions/upload-artifact@v6
+        with:
+          name: ac-check-report-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ac-report.md
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Upload debug artifacts
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v6
+        with:
+          name: ac-check-debug-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ticket.md
+            diff.patch
+            files.txt
+            ac-result.json
+            ac-report.md
+            copilot-output.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+  comment:
+    needs: analyze
+    if: github.event_name == 'pull_request' && needs.analyze.outputs.has_report == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      pull-requests: write
+    steps:
+      - name: Download report
+        uses: actions/download-artifact@v6
+        with:
+          name: ac-check-report-${{ github.run_id }}-${{ github.run_attempt }}
+
       - name: Post sticky PR comment
-        if: github.event_name == 'pull_request' && steps.jira.outputs.has_content == 'true' && steps.diff.outputs.has_diff == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.pull_request.number }}
-          TICKET: ${{ steps.ticket.outputs.key }}
+          TICKET: ${{ needs.analyze.outputs.ticket }}
         run: |
           marker="<!-- ac-check-report -->"
           {
@@ -136,16 +187,3 @@ jobs:
           else
             gh api -X POST "repos/$GITHUB_REPOSITORY/issues/$PR/comments" -F body=@comment.md
           fi
-
-      - name: Upload debug artifacts
-        if: always()
-        uses: actions/upload-artifact@v5
-        with:
-          name: ac-check-${{ github.run_id }}
-          path: |
-            ticket.md
-            diff.patch
-            files.txt
-            ac-report.md
-            copilot-output.log
-          if-no-files-found: ignore
