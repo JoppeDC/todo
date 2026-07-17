@@ -91,14 +91,15 @@ jobs:
         if: steps.jira.outputs.has_content == 'true' && steps.diff.outputs.has_diff == 'true'
         run: npm install -g @github/copilot
 
-      - name: Run AC check agent
+      - name: Run AC review agent
         if: steps.jira.outputs.has_content == 'true' && steps.diff.outputs.has_diff == 'true'
         env:
           GITHUB_TOKEN: ${{ github.token }}
           COPILOT_GITHUB_TOKEN: ${{ github.token }}
         run: |
           set +e
-          copilot -p "$(cat .github/ac-check/prompt.md)" \
+          copilot --agent ac-review \
+            -p "Run your acceptance-criteria check on the PR in the current working directory." \
             -s \
             --available-tools='view,grep,glob' \
             --disable-builtin-mcps \
@@ -107,11 +108,36 @@ jobs:
             --no-custom-instructions \
             --no-remote \
             --no-remote-export \
-            > copilot-response.txt 2> copilot-output.log
+            > ac-response.txt 2> ac-output.log
           status=$?
           set -e
           if [ "$status" -ne 0 ]; then
-            echo "::error::Copilot CLI exited with status $status — see copilot-output.log artifact"
+            echo "::error::Copilot CLI (ac-review) exited with status $status — see ac-output.log artifact"
+            exit "$status"
+          fi
+
+      - name: Run bug hunt agent
+        if: steps.jira.outputs.has_content == 'true' && steps.diff.outputs.has_diff == 'true'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          COPILOT_GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set +e
+          copilot --agent bug-hunt \
+            -p "Run your bug hunt on the PR in the current working directory." \
+            -s \
+            --available-tools='view,grep,glob' \
+            --disable-builtin-mcps \
+            --no-ask-user \
+            --no-auto-update \
+            --no-custom-instructions \
+            --no-remote \
+            --no-remote-export \
+            > bugs-response.txt 2> bugs-output.log
+          status=$?
+          set -e
+          if [ "$status" -ne 0 ]; then
+            echo "::error::Copilot CLI (bug-hunt) exited with status $status — see bugs-output.log artifact"
             exit "$status"
           fi
 
@@ -119,7 +145,7 @@ jobs:
         id: report
         if: steps.jira.outputs.has_content == 'true' && steps.diff.outputs.has_diff == 'true'
         run: |
-          node .github/ac-check/validate-report.mjs copilot-response.txt ac-report.md files.txt
+          node .github/ac-check/validate-report.mjs ac-response.txt bugs-response.txt ac-report.md files.txt
           echo "has_report=true" >> "$GITHUB_OUTPUT"
           if grep -q '^🟢 ' ac-report.md; then
             echo "all_met=true" >> "$GITHUB_OUTPUT"
@@ -157,9 +183,11 @@ jobs:
             ticket.md
             diff.patch
             files.txt
-            copilot-response.txt
+            ac-response.txt
+            ac-output.log
+            bugs-response.txt
+            bugs-output.log
             ac-report.md
-            copilot-output.log
           if-no-files-found: ignore
           retention-days: 7
 

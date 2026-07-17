@@ -1,6 +1,11 @@
 import fs from 'node:fs'
 
-const [inputPath = 'copilot-response.txt', outputPath = 'ac-report.md', filesPath = 'files.txt'] = process.argv.slice(2)
+const [
+  acPath = 'ac-response.txt',
+  bugsPath = 'bugs-response.txt',
+  outputPath = 'ac-report.md',
+  filesPath = 'files.txt',
+] = process.argv.slice(2)
 
 function fail(message) {
   console.error(`::error::Invalid AC report: ${message}`)
@@ -61,17 +66,17 @@ function parseResult(path) {
   }
 }
 
-const result = parseResult(inputPath)
+const ac = parseResult(acPath)
 
-requireKeys(result, ['summary', 'criteria', 'bugs', 'risks'], 'root')
-requireString(result.summary, 'summary', 240)
+requireKeys(ac, ['summary', 'criteria', 'risks'], 'AC root')
+requireString(ac.summary, 'summary', 240)
 
-if (!Array.isArray(result.criteria) || result.criteria.length < 1 || result.criteria.length > 12) {
+if (!Array.isArray(ac.criteria) || ac.criteria.length < 1 || ac.criteria.length > 12) {
   fail('criteria must contain between 1 and 12 items')
 }
 
 const statuses = new Set(['met', 'partial', 'missing', 'not_verifiable'])
-for (const [index, criterion] of result.criteria.entries()) {
+for (const [index, criterion] of ac.criteria.entries()) {
   const context = `criteria[${index}]`
   requireKeys(criterion, ['status', 'criterion', 'notes'], context)
   if (!statuses.has(criterion.status)) fail(`${context}.status is invalid`)
@@ -84,12 +89,22 @@ for (const [index, criterion] of result.criteria.entries()) {
   }
 }
 
-if (!Array.isArray(result.bugs) || result.bugs.length > 8) {
+if (!Array.isArray(ac.risks) || ac.risks.length > 4) {
+  fail('risks must be an array with at most 4 items')
+}
+for (const [index, risk] of ac.risks.entries()) {
+  requireString(risk, `risks[${index}]`, 180)
+}
+
+const bugReport = parseResult(bugsPath)
+
+requireKeys(bugReport, ['bugs'], 'bug root')
+if (!Array.isArray(bugReport.bugs) || bugReport.bugs.length > 8) {
   fail('bugs must be an array with at most 8 items')
 }
 
 const files = changedFiles(filesPath)
-for (const [index, bug] of result.bugs.entries()) {
+for (const [index, bug] of bugReport.bugs.entries()) {
   const context = `bugs[${index}]`
   requireKeys(bug, ['file', 'description'], context)
   requireString(bug.file, `${context}.file`, 240)
@@ -97,24 +112,17 @@ for (const [index, bug] of result.bugs.entries()) {
   if (!files.has(bug.file)) fail(`${context}.file is not present in ${filesPath}`)
 }
 
-if (!Array.isArray(result.risks) || result.risks.length > 4) {
-  fail('risks must be an array with at most 4 items')
-}
-for (const [index, risk] of result.risks.entries()) {
-  requireString(risk, `risks[${index}]`, 180)
-}
-
 const prose = [
-  result.summary,
-  ...result.criteria.flatMap(({ criterion, notes }) => [criterion, notes]),
-  ...result.bugs.flatMap(({ file, description }) => [file, description]),
-  ...result.risks,
+  ac.summary,
+  ...ac.criteria.flatMap(({ criterion, notes }) => [criterion, notes]),
+  ...ac.risks,
+  ...bugReport.bugs.flatMap(({ file, description }) => [file, description]),
 ].filter(Boolean)
 const proseWords = prose.join(' ').trim().split(/\s+/u).length
 if (proseWords > 230) fail(`prose contains ${proseWords} words; maximum is 230`)
 
-const hasBug = result.bugs.length > 0
-const hasGap = result.criteria.some(({ status }) => status !== 'met')
+const hasBug = bugReport.bugs.length > 0
+const hasGap = ac.criteria.some(({ status }) => status !== 'met')
 const verdict = hasBug ? '🔴' : hasGap ? '🟡' : '🟢'
 const statusEmoji = {
   met: '✅',
@@ -124,22 +132,22 @@ const statusEmoji = {
 }
 
 const lines = [
-  `${verdict} **${result.summary}**`,
+  `${verdict} **${ac.summary}**`,
   '',
   '| Status | Acceptance criterion | Notes |',
   '|:------:|----------------------|-------|',
-  ...result.criteria.map(({ status, criterion, notes }) =>
+  ...ac.criteria.map(({ status, criterion, notes }) =>
     `| ${statusEmoji[status]} | ${criterion} | ${notes} |`,
   ),
 ]
 
 if (hasBug) {
   lines.push('', '**Bugs**')
-  for (const { file, description } of result.bugs) lines.push(`🔴 ${description}; ${file}`)
+  for (const { file, description } of bugReport.bugs) lines.push(`🔴 ${description}; ${file}`)
 }
 
-if (result.risks.length > 0) {
-  lines.push('', `**Risks:** ${result.risks.join('; ')}`)
+if (ac.risks.length > 0) {
+  lines.push('', `**Risks:** ${ac.risks.join('; ')}`)
 }
 
 lines.push('', '_Preliminary automated check — not a substitute for review or testing._', '')
@@ -148,4 +156,4 @@ const report = lines.join('\n')
 if (Buffer.byteLength(report, 'utf8') > 8_000) fail('rendered report exceeds 8 KB')
 
 fs.writeFileSync(outputPath, report)
-console.log(`Validated ${result.criteria.length} criteria and ${result.bugs.length} bugs; verdict ${verdict}`)
+console.log(`Validated ${ac.criteria.length} criteria and ${bugReport.bugs.length} bugs; verdict ${verdict}`)
