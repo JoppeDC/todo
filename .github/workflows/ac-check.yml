@@ -61,6 +61,7 @@ jobs:
           jq -r '"# \(.key) — \(.fields.summary)\n\n## Description\n\n\(.fields.description // "_empty_")\n\n## Technical Analysis\n\n\(.fields.customfield_10038 // "_empty_")"' \
             ticket.json > ticket.md
           content=$(jq -r '(.fields.description // "") + (.fields.customfield_10038 // "")' ticket.json)
+          rm -f ticket.json
           echo "has_content=$([ -n "$content" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
 
       - name: Compute diff against base
@@ -115,6 +116,10 @@ jobs:
             echo "::error::Copilot CLI (ac-review) exited with status $status — see ac-output.log artifact"
             exit "$status"
           fi
+
+      - name: Extract AC findings for bug hunt
+        if: steps.jira.outputs.has_content == 'true' && steps.diff.outputs.has_diff == 'true'
+        run: node .github/ac-check/extract-criteria.mjs ac-response.txt ac-findings.json
 
       - name: Run bug hunt agent
         if: steps.jira.outputs.has_content == 'true' && steps.diff.outputs.has_diff == 'true'
@@ -185,6 +190,7 @@ jobs:
             files.txt
             ac-response.txt
             ac-output.log
+            ac-findings.json
             bugs-response.txt
             bugs-output.log
             ac-report.md

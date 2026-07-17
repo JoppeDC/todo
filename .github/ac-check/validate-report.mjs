@@ -1,5 +1,7 @@
 import fs from 'node:fs'
 
+import { parseAgentResponse } from './parse-response.mjs'
+
 const [
   acPath = 'ac-response.txt',
   bugsPath = 'bugs-response.txt',
@@ -48,21 +50,10 @@ function changedFiles(path) {
 }
 
 function parseResult(path) {
-  const content = fs.readFileSync(path, 'utf8').trim()
-
   try {
-    return JSON.parse(content)
-  } catch (directError) {
-    const jsonBlocks = [...content.matchAll(/```json\s*([\s\S]*?)```/giu)]
-    if (jsonBlocks.length !== 1) {
-      fail(`${path} must be pure JSON or contain exactly one fenced JSON block`)
-    }
-
-    try {
-      return JSON.parse(jsonBlocks[0][1].trim())
-    } catch (blockError) {
-      fail(`could not parse the fenced JSON block in ${path}: ${blockError.message}`)
-    }
+    return parseAgentResponse(fs.readFileSync(path, 'utf8').trim())
+  } catch (error) {
+    fail(`${path} ${error.message.startsWith('must be') ? error.message : `could not be parsed: ${error.message}`}`)
   }
 }
 
