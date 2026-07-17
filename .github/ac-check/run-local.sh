@@ -42,6 +42,7 @@ if [ "$status" != "200" ]; then
 fi
 jq -r '"# \(.key) — \(.fields.summary)\n\n## Description\n\n\(.fields.description // "_empty_")\n\n## Technical Analysis\n\n\(.fields.customfield_10038 // "_empty_")"' \
   ticket.json > ticket.md
+rm -f ticket.json
 
 git fetch origin "${BASE#origin/}"
 git diff "$BASE...HEAD" > diff.patch
@@ -62,6 +63,7 @@ run_agent() {
 }
 
 run_agent ac-review "Run your acceptance-criteria check on the PR in the current working directory." ac-response.txt ac-output.log
+node "$script_dir/extract-criteria.mjs" ac-response.txt ac-findings.json
 run_agent bug-hunt "Run your bug hunt on the PR in the current working directory." bugs-response.txt bugs-output.log
 
 node "$script_dir/validate-report.mjs" ac-response.txt bugs-response.txt ac-report.md files.txt
