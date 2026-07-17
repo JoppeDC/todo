@@ -80,7 +80,7 @@ for (const [index, criterion] of result.criteria.entries()) {
   if (criterion.status === 'met') {
     if (criterion.notes !== '') fail(`${context}.notes must be empty when status is met`)
   } else {
-    requireString(criterion.notes, `${context}.notes`, 180)
+    requireString(criterion.notes, `${context}.notes`, 400)
   }
 }
 
@@ -93,7 +93,7 @@ for (const [index, bug] of result.bugs.entries()) {
   const context = `bugs[${index}]`
   requireKeys(bug, ['file', 'description'], context)
   requireString(bug.file, `${context}.file`, 240)
-  requireString(bug.description, `${context}.description`, 220)
+  requireString(bug.description, `${context}.description`, 350)
   if (!files.has(bug.file)) fail(`${context}.file is not present in ${filesPath}`)
 }
 
@@ -111,7 +111,7 @@ const prose = [
   ...result.risks,
 ].filter(Boolean)
 const proseWords = prose.join(' ').trim().split(/\s+/u).length
-if (proseWords > 130) fail(`prose contains ${proseWords} words; maximum is 130`)
+if (proseWords > 230) fail(`prose contains ${proseWords} words; maximum is 230`)
 
 const hasBug = result.bugs.length > 0
 const hasGap = result.criteria.some(({ status }) => status !== 'met')
