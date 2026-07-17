@@ -114,7 +114,7 @@ if (proseWords > 230) fail(`prose contains ${proseWords} words; maximum is 230`)
 
 const hasBug = bugReport.bugs.length > 0
 const hasGap = ac.criteria.some(({ status }) => status !== 'met')
-const verdict = hasBug ? '🔴' : hasGap ? '🟡' : '🟢'
+const acVerdict = hasGap ? '🟡' : '🟢'
 const statusEmoji = {
   met: '✅',
   partial: '⚠️',
@@ -123,7 +123,7 @@ const statusEmoji = {
 }
 
 const lines = [
-  `${verdict} **${ac.summary}**`,
+  `${acVerdict} **${ac.summary}**`,
   '',
   '| Status | Acceptance criterion | Notes |',
   '|:------:|----------------------|-------|',
@@ -147,4 +147,12 @@ const report = lines.join('\n')
 if (Buffer.byteLength(report, 'utf8') > 8_000) fail('rendered report exceeds 8 KB')
 
 fs.writeFileSync(outputPath, report)
-console.log(`Validated ${ac.criteria.length} criteria and ${bugReport.bugs.length} bugs; verdict ${verdict}`)
+
+// In CI the workflow's enforcement step reads these; locally GITHUB_OUTPUT is unset.
+if (process.env.GITHUB_OUTPUT) {
+  fs.appendFileSync(
+    process.env.GITHUB_OUTPUT,
+    `all_met=${hasGap ? 'false' : 'true'}\nhas_bugs=${hasBug ? 'true' : 'false'}\n`,
+  )
+}
+console.log(`Validated ${ac.criteria.length} criteria and ${bugReport.bugs.length} bugs; AC verdict ${acVerdict}`)
