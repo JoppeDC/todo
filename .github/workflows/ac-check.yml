@@ -150,13 +150,9 @@ jobs:
         id: report
         if: steps.jira.outputs.has_content == 'true' && steps.diff.outputs.has_diff == 'true'
         run: |
+          # validate-report.mjs also appends all_met and has_bugs to GITHUB_OUTPUT
           node .github/ac-check/validate-report.mjs ac-response.txt bugs-response.txt ac-report.md files.txt
           echo "has_report=true" >> "$GITHUB_OUTPUT"
-          if grep -q '^🟢 ' ac-report.md; then
-            echo "all_met=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "all_met=false" >> "$GITHUB_OUTPUT"
-          fi
 
       - name: Publish job summary
         if: steps.report.outputs.has_report == 'true'
@@ -197,10 +193,18 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
-      - name: Enforce acceptance criteria
-        if: steps.report.outputs.has_report == 'true' && steps.report.outputs.all_met != 'true'
+      - name: Enforce findings
+        if: steps.report.outputs.has_report == 'true' && (steps.report.outputs.all_met != 'true' || steps.report.outputs.has_bugs == 'true')
+        env:
+          ALL_MET: ${{ steps.report.outputs.all_met }}
+          HAS_BUGS: ${{ steps.report.outputs.has_bugs }}
         run: |
-          echo "::error::Not all acceptance criteria are met — see the AC Check report"
+          if [ "$ALL_MET" != "true" ]; then
+            echo "::error::Not all acceptance criteria are met — see the AC Check report"
+          fi
+          if [ "$HAS_BUGS" = "true" ]; then
+            echo "::error::The bug hunt found bugs — see the AC Check report"
+          fi
           exit 1
 
   comment:
