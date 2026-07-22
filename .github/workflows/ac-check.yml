@@ -60,7 +60,7 @@ jobs:
           fi
           jq -r '"# \(.key) — \(.fields.summary)\n\n## Description\n\n\(.fields.description // "_empty_")\n\n## Technical Analysis\n\n\(.fields.customfield_10038 // "_empty_")"' \
             ticket.json > ticket.md
-          content=$(jq -r '(.fields.description // "") + (.fields.customfield_10038 // "")' ticket.json)
+          content=$(jq -r '(.fields.summary // "") + (.fields.description // "") + (.fields.customfield_10038 // "")' ticket.json)
           rm -f ticket.json
           echo "has_content=$([ -n "$content" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
 
@@ -82,7 +82,7 @@ jobs:
           {
             echo "## AC Check — $TICKET"
             if [ "$HAS_CONTENT" != "true" ]; then
-              echo "Ticket has no description or technical analysis — nothing to check against."
+              echo "Ticket has no summary, description, or technical analysis — nothing to check against."
             else
               echo "No changes against the base branch — nothing to check."
             fi
