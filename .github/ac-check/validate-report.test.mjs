@@ -68,7 +68,9 @@ test('renders a green report when every criterion is met and there are no bugs',
 
   assert.equal(result.status, 0, result.stderr)
   assert.match(result.report, /^🟢 /u)
-  assert.match(result.report, /\| ✅ \| State persists after refresh \|  \| src\/App\.jsx:24 restores todos/u)
+  assert.match(result.report, /\| Status \| Acceptance criterion \| Notes \|/u)
+  assert.match(result.report, /\| ✅ \| State persists after refresh \|  \|/u)
+  assert.doesNotMatch(result.report, /Evidence|src\/App\.jsx:24 restores todos/u)
 })
 
 test('computes a yellow verdict when a criterion has a gap', () => {
@@ -87,7 +89,7 @@ test('computes a yellow verdict when a criterion has a gap', () => {
   assert.match(result.report, /^🟡 /u)
 })
 
-test('renders bugs separately without replacing the AC verdict', () => {
+test('renders bugs as a compact list without replacing the AC verdict', () => {
   const result = validate({
     bugs: {
       bugs: [validBug()],
@@ -96,9 +98,8 @@ test('renders bugs separately without replacing the AC verdict', () => {
 
   assert.equal(result.status, 0, result.stderr)
   assert.match(result.report, /^🟢 /u)
-  assert.match(result.report, /🔴 Clearing completed items removes active items too; src\/App\.jsx:42/u)
-  assert.match(result.report, /Trigger: Clear completed todos after adding one active todo/u)
-  assert.match(result.report, /Evidence: The clear handler filters for completed items instead of active items/u)
+  assert.match(result.report, /- 🔴 Clearing completed items removes active items too — `src\/App\.jsx:42`/u)
+  assert.doesNotMatch(result.report, /Trigger:|Evidence:/u)
 })
 
 test('rejects notes on a met criterion', () => {
@@ -157,7 +158,7 @@ test('accepts a null line for a bug caused by deleted code', () => {
   })
 
   assert.equal(result.status, 0, result.stderr)
-  assert.match(result.report, /active items too; src\/App\.jsx\n/u)
+  assert.match(result.report, /active items too — `src\/App\.jsx`/u)
 })
 
 test('rejects an invalid bug line', () => {

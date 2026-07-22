@@ -129,23 +129,18 @@ if (ac.criteria.length === 0) {
   lines.push('_No concrete acceptance criteria could be derived from the supplied ticket._')
 } else {
   lines.push(
-    '| Status | Acceptance criterion | Notes | Evidence |',
-    '|:------:|----------------------|-------|----------|',
-    ...ac.criteria.map(({ status, criterion, notes, evidence }) =>
-      `| ${statusEmoji[status]} | ${criterion} | ${notes} | ${evidence} |`,
+    '| Status | Acceptance criterion | Notes |',
+    '|:------:|----------------------|-------|',
+    ...ac.criteria.map(({ status, criterion, notes }) =>
+      `| ${statusEmoji[status]} | ${criterion} | ${notes} |`,
     ),
   )
 }
 
 if (hasBug) {
   lines.push('', '**Bugs**')
-  for (const { file, line, trigger, description, evidence } of bugReport.bugs) {
-    lines.push(
-      '',
-      `🔴 ${description}; ${file}${line === null ? '' : `:${line}`}`,
-      `- Trigger: ${trigger}`,
-      `- Evidence: ${evidence}`,
-    )
+  for (const { file, line, description } of bugReport.bugs) {
+    lines.push(`- 🔴 ${description} — \`${file}${line === null ? '' : `:${line}`}\``)
   }
 }
 
