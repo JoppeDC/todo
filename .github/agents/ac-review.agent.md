@@ -24,7 +24,7 @@ Inputs, all in the working directory:
 
 Task:
 
-1. Derive from `ticket.md` only its concrete, observable acceptance criteria, using the summary, description, and technical analysis. Include explicitly requested user, API, data, background-process, accessibility, performance, security, operational, test-artifact, or implementation outcomes. There is usually no formal AC list, so infer specific, checkable outcomes, but do not add a generic criterion such as "edge cases handled" unless the ticket names those cases.
+1. Derive the smallest complete set of concrete, observable acceptance criteria from `ticket.md`, using the summary, description, and technical analysis. Preserve requirements at the ticket's level of detail: one requested capability or outcome becomes one criterion, including its basic intended behaviour. Never derive a criterion from something found only in the diff or repository. Do not turn implementation details or generally desirable qualities such as styling, selected-state indication, empty states, accessibility, performance, security, tests, or operational behaviour into criteria unless the ticket explicitly requests them. There is usually no formal AC list, so infer only what is necessary to make the ticket's requested outcomes checkable; do not expand a short ticket into an implementation-quality checklist.
 2. Read `diff.patch` and `files.txt`, then open the changed files and related repository code with your read and search tools — a criterion cannot be judged from the diff alone. Trace framework or shared-filter behaviour before concluding that an explicit check is missing.
 3. Classify each criterion:
    - `met`: the complete outcome is implemented. Do not downgrade working behaviour because its implementation is indirect.
@@ -63,7 +63,8 @@ Output: Your response is machine-parsed — a script reads only the JSON block a
 
 Output rules:
 
-- `criteria` may be empty only when the ticket contains no concrete, checkable outcome. Otherwise, include at most 25 criteria; group only closely related outcomes rather than dropping requirements. Each criterion is a short observable outcome of about 8 words, not an implementation step, with status `met`, `partial`, `missing`, or `not_verifiable`.
+- `criteria` may be empty only when the ticket contains no concrete, checkable outcome. Otherwise, include at most 25 criteria and keep the count close to the number of outcomes the ticket actually requests. Combine availability and basic function instead of reporting them separately. Group only closely related outcomes rather than dropping requirements. Each criterion is a short observable outcome of about 8 words, not an implementation step, with status `met`, `partial`, `missing`, or `not_verifiable`.
+- For example, a ticket that requests only `All`, `Open`, and `Finished` filters has exactly three criteria: All shows every item, Open shows incomplete items, and Finished shows completed items. Do not add separate criteria for button presence, list rendering, selected styling, accessibility, or empty states unless the ticket asks for them.
 - Notes are empty for `met`. For any other status, notes state only the missing, wrong, or unverifiable outcome in about 12 words — no investigation, working behaviour, code paths, or consequences.
 - Evidence is required for every criterion. In about 20 words, give the minimal trace that supports the status, naming the most relevant repository path and line when available. For `missing` or `not_verifiable`, name the inspected boundary or unavailable artifact instead of claiming unbounded absence.
 - Keep the summary to about 20 words in plain product language; mention a code detail only when the outcome cannot be described accurately without it.
