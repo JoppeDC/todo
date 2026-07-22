@@ -37,6 +37,12 @@ function requireString(value, context, maxLength) {
   }
 }
 
+function requireLine(value, context) {
+  if (value !== null && (!Number.isSafeInteger(value) || value < 1)) {
+    fail(`${context} must be a positive integer or null`)
+  }
+}
+
 function changedFiles(path) {
   const files = new Set()
   const content = fs.readFileSync(path, 'utf8').trim()
@@ -62,22 +68,23 @@ const ac = parseResult(acPath)
 requireKeys(ac, ['summary', 'criteria', 'risks'], 'AC root')
 requireString(ac.summary, 'summary', 240)
 
-if (!Array.isArray(ac.criteria) || ac.criteria.length < 1 || ac.criteria.length > 12) {
-  fail('criteria must contain between 1 and 12 items')
+if (!Array.isArray(ac.criteria) || ac.criteria.length > 25) {
+  fail('criteria must be an array with at most 25 items')
 }
 
 const statuses = new Set(['met', 'partial', 'missing', 'not_verifiable'])
 for (const [index, criterion] of ac.criteria.entries()) {
   const context = `criteria[${index}]`
-  requireKeys(criterion, ['status', 'criterion', 'notes'], context)
+  requireKeys(criterion, ['status', 'criterion', 'notes', 'evidence'], context)
   if (!statuses.has(criterion.status)) fail(`${context}.status is invalid`)
   requireString(criterion.criterion, `${context}.criterion`, 120)
 
   if (criterion.status === 'met') {
     if (criterion.notes !== '') fail(`${context}.notes must be empty when status is met`)
   } else {
-    requireString(criterion.notes, `${context}.notes`, 400)
+    requireString(criterion.notes, `${context}.notes`, 240)
   }
+  requireString(criterion.evidence, `${context}.evidence`, 300)
 }
 
 if (!Array.isArray(ac.risks) || ac.risks.length > 4) {
@@ -90,30 +97,24 @@ for (const [index, risk] of ac.risks.entries()) {
 const bugReport = parseResult(bugsPath)
 
 requireKeys(bugReport, ['bugs'], 'bug root')
-if (!Array.isArray(bugReport.bugs) || bugReport.bugs.length > 8) {
-  fail('bugs must be an array with at most 8 items')
+if (!Array.isArray(bugReport.bugs) || bugReport.bugs.length > 25) {
+  fail('bugs must be an array with at most 25 items')
 }
 
 const files = changedFiles(filesPath)
 for (const [index, bug] of bugReport.bugs.entries()) {
   const context = `bugs[${index}]`
-  requireKeys(bug, ['file', 'description'], context)
+  requireKeys(bug, ['file', 'line', 'trigger', 'description', 'evidence'], context)
   requireString(bug.file, `${context}.file`, 240)
-  requireString(bug.description, `${context}.description`, 350)
+  requireLine(bug.line, `${context}.line`)
+  requireString(bug.trigger, `${context}.trigger`, 240)
+  requireString(bug.description, `${context}.description`, 240)
+  requireString(bug.evidence, `${context}.evidence`, 300)
   if (!files.has(bug.file)) fail(`${context}.file is not present in ${filesPath}`)
 }
 
-const prose = [
-  ac.summary,
-  ...ac.criteria.flatMap(({ criterion, notes }) => [criterion, notes]),
-  ...ac.risks,
-  ...bugReport.bugs.flatMap(({ file, description }) => [file, description]),
-].filter(Boolean)
-const proseWords = prose.join(' ').trim().split(/\s+/u).length
-if (proseWords > 230) fail(`prose contains ${proseWords} words; maximum is 230`)
-
 const hasBug = bugReport.bugs.length > 0
-const hasGap = ac.criteria.some(({ status }) => status !== 'met')
+const hasGap = ac.criteria.length === 0 || ac.criteria.some(({ status }) => status !== 'met')
 const acVerdict = hasGap ? '🟡' : '🟢'
 const statusEmoji = {
   met: '✅',
@@ -122,19 +123,30 @@ const statusEmoji = {
   not_verifiable: '❓',
 }
 
-const lines = [
-  `${acVerdict} **${ac.summary}**`,
-  '',
-  '| Status | Acceptance criterion | Notes |',
-  '|:------:|----------------------|-------|',
-  ...ac.criteria.map(({ status, criterion, notes }) =>
-    `| ${statusEmoji[status]} | ${criterion} | ${notes} |`,
-  ),
-]
+const lines = [`${acVerdict} **${ac.summary}**`, '']
+
+if (ac.criteria.length === 0) {
+  lines.push('_No concrete acceptance criteria could be derived from the supplied ticket._')
+} else {
+  lines.push(
+    '| Status | Acceptance criterion | Notes | Evidence |',
+    '|:------:|----------------------|-------|----------|',
+    ...ac.criteria.map(({ status, criterion, notes, evidence }) =>
+      `| ${statusEmoji[status]} | ${criterion} | ${notes} | ${evidence} |`,
+    ),
+  )
+}
 
 if (hasBug) {
   lines.push('', '**Bugs**')
-  for (const { file, description } of bugReport.bugs) lines.push(`🔴 ${description}; ${file}`)
+  for (const { file, line, trigger, description, evidence } of bugReport.bugs) {
+    lines.push(
+      '',
+      `🔴 ${description}; ${file}${line === null ? '' : `:${line}`}`,
+      `- Trigger: ${trigger}`,
+      `- Evidence: ${evidence}`,
+    )
+  }
 }
 
 if (ac.risks.length > 0) {
@@ -144,7 +156,7 @@ if (ac.risks.length > 0) {
 lines.push('', '_Preliminary automated check — not a substitute for review or testing._', '')
 
 const report = lines.join('\n')
-if (Buffer.byteLength(report, 'utf8') > 8_000) fail('rendered report exceeds 8 KB')
+if (Buffer.byteLength(report, 'utf8') > 55_000) fail('rendered report exceeds 55 KB')
 
 fs.writeFileSync(outputPath, report)
 
