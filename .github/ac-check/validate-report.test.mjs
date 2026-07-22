@@ -14,6 +14,7 @@ function validateRaw(rawAc, rawBugs, files = 'M\tsrc/App.jsx\n') {
   const bugsInput = path.join(directory, 'bugs-response.txt')
   const output = path.join(directory, 'report.md')
   const changedFiles = path.join(directory, 'files.txt')
+  const actionOutput = path.join(directory, 'github-output.txt')
 
   fs.writeFileSync(acInput, rawAc)
   fs.writeFileSync(bugsInput, rawBugs)
@@ -21,11 +22,13 @@ function validateRaw(rawAc, rawBugs, files = 'M\tsrc/App.jsx\n') {
 
   const processResult = spawnSync(process.execPath, [validator, acInput, bugsInput, output, changedFiles], {
     encoding: 'utf8',
+    env: { ...process.env, GITHUB_OUTPUT: actionOutput },
   })
 
   return {
     ...processResult,
     report: fs.existsSync(output) ? fs.readFileSync(output, 'utf8') : '',
+    actionOutput: fs.existsSync(actionOutput) ? fs.readFileSync(actionOutput, 'utf8') : '',
   }
 }
 
@@ -37,9 +40,21 @@ function validAc(overrides = {}) {
         status: 'met',
         criterion: 'State persists after refresh',
         notes: '',
+        evidence: 'src/App.jsx:24 restores todos from local storage during initialization',
       },
     ],
     risks: [],
+    ...overrides,
+  }
+}
+
+function validBug(overrides = {}) {
+  return {
+    file: 'src/App.jsx',
+    line: 42,
+    trigger: 'Clear completed todos after adding one active todo',
+    description: 'Clearing completed items removes active items too',
+    evidence: 'The clear handler filters for completed items instead of active items',
     ...overrides,
   }
 }
@@ -53,7 +68,7 @@ test('renders a green report when every criterion is met and there are no bugs',
 
   assert.equal(result.status, 0, result.stderr)
   assert.match(result.report, /^🟢 /u)
-  assert.match(result.report, /\| ✅ \| State persists after refresh \|  \|/u)
+  assert.match(result.report, /\| ✅ \| State persists after refresh \|  \| src\/App\.jsx:24 restores todos/u)
 })
 
 test('computes a yellow verdict when a criterion has a gap', () => {
@@ -63,6 +78,7 @@ test('computes a yellow verdict when a criterion has a gap', () => {
         status: 'partial',
         criterion: 'State persists after refresh',
         notes: 'Completed items are not restored',
+        evidence: 'src/App.jsx:24 restores only todos whose completed value is false',
       }],
     }),
   })
@@ -71,19 +87,18 @@ test('computes a yellow verdict when a criterion has a gap', () => {
   assert.match(result.report, /^🟡 /u)
 })
 
-test('computes a red verdict when the bug report has a bug', () => {
+test('renders bugs separately without replacing the AC verdict', () => {
   const result = validate({
     bugs: {
-      bugs: [{
-        file: 'src/App.jsx',
-        description: 'Clearing completed items removes active items too',
-      }],
+      bugs: [validBug()],
     },
   })
 
   assert.equal(result.status, 0, result.stderr)
-  assert.match(result.report, /^🔴 /u)
-  assert.match(result.report, /Clearing completed items removes active items too; src\/App\.jsx/u)
+  assert.match(result.report, /^🟢 /u)
+  assert.match(result.report, /🔴 Clearing completed items removes active items too; src\/App\.jsx:42/u)
+  assert.match(result.report, /Trigger: Clear completed todos after adding one active todo/u)
+  assert.match(result.report, /Evidence: The clear handler filters for completed items instead of active items/u)
 })
 
 test('rejects notes on a met criterion', () => {
@@ -93,6 +108,7 @@ test('rejects notes on a met criterion', () => {
         status: 'met',
         criterion: 'State persists after refresh',
         notes: 'Implemented in the application',
+        evidence: 'src/App.jsx:24 restores todos from local storage during initialization',
       }],
     }),
   })
@@ -101,18 +117,83 @@ test('rejects notes on a met criterion', () => {
   assert.match(result.stderr, /notes must be empty/u)
 })
 
+test('rejects a criterion without auditable evidence', () => {
+  const criterion = { ...validAc().criteria[0] }
+  delete criterion.evidence
+  const result = validate({ ac: validAc({ criteria: [criterion] }) })
+
+  assert.notEqual(result.status, 0)
+  assert.match(result.stderr, /must contain exactly/u)
+})
+
 test('rejects a bug attributed to an unchanged file', () => {
   const result = validate({
     bugs: {
-      bugs: [{
-        file: 'src/Other.jsx',
-        description: 'The action returns the wrong result',
-      }],
+      bugs: [validBug({ file: 'src/Other.jsx' })],
     },
   })
 
   assert.notEqual(result.status, 0)
   assert.match(result.stderr, /not present/u)
+})
+
+test('accepts no assessable criteria as a deliberate failing verdict', () => {
+  const result = validate({
+    ac: validAc({
+      summary: 'The ticket contains no concrete acceptance criteria to assess.',
+      criteria: [],
+    }),
+  })
+
+  assert.equal(result.status, 0, result.stderr)
+  assert.match(result.report, /^🟡 /u)
+  assert.match(result.report, /No concrete acceptance criteria could be derived/u)
+  assert.match(result.actionOutput, /^all_met=false$/mu)
+})
+
+test('accepts a null line for a bug caused by deleted code', () => {
+  const result = validate({
+    bugs: { bugs: [validBug({ line: null })] },
+  })
+
+  assert.equal(result.status, 0, result.stderr)
+  assert.match(result.report, /active items too; src\/App\.jsx\n/u)
+})
+
+test('rejects an invalid bug line', () => {
+  const result = validate({
+    bugs: { bugs: [validBug({ line: 0 })] },
+  })
+
+  assert.notEqual(result.status, 0)
+  assert.match(result.stderr, /positive integer or null/u)
+})
+
+test('rejects a bug without a reproduction trigger', () => {
+  const bug = validBug()
+  delete bug.trigger
+  const result = validate({ bugs: { bugs: [bug] } })
+
+  assert.notEqual(result.status, 0)
+  assert.match(result.stderr, /must contain exactly/u)
+})
+
+test('allows independently valid agent reports beyond the former shared word budget', () => {
+  const criteria = Array.from({ length: 6 }, (_, index) => ({
+    status: 'partial',
+    criterion: `Observable requirement number ${index + 1} remains incomplete for users`,
+    notes: 'One requested outcome remains unavailable after the change is applied',
+    evidence: `src/App.jsx:${index + 1} implements only the first branch of this requested outcome`,
+  }))
+  const bugs = Array.from({ length: 8 }, (_, index) => validBug({
+    line: index + 1,
+    trigger: `Perform currently reachable action number ${index + 1} after loading existing data`,
+    description: `Action number ${index + 1} returns an observably incorrect result for the user`,
+    evidence: `The changed branch number ${index + 1} returns the opposite state without a later correction`,
+  }))
+  const result = validate({ ac: validAc({ criteria }), bugs: { bugs } })
+
+  assert.equal(result.status, 0, result.stderr)
 })
 
 test('rejects an AC response that still contains a bugs key', () => {
