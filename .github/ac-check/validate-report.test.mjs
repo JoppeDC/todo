@@ -73,6 +73,47 @@ test('renders a green report when every criterion is met and there are no bugs',
   assert.doesNotMatch(result.report, /Evidence|src\/App\.jsx:24 restores todos/u)
 })
 
+test('truncates an overlong summary instead of rejecting the report', () => {
+  const result = validate({
+    ac: validAc({
+      summary: `The change meets the ticket requirements. ${'Additional generated explanation. '.repeat(12)}END`,
+    }),
+  })
+
+  assert.equal(result.status, 0, result.stderr)
+  assert.match(result.report, /^🟢 \*\*.{239}…\*\*$/mu)
+  assert.doesNotMatch(result.report, /END/u)
+})
+
+test('accepts Markdown and line breaks in hidden evidence', () => {
+  const result = validate({
+    bugs: {
+      bugs: [validBug({
+        evidence: 'The changed handler calls `removeAll()`.\nSee [the trace](https://example.test/trace) for details.',
+      })],
+    },
+  })
+
+  assert.equal(result.status, 0, result.stderr)
+  assert.doesNotMatch(result.report, /removeAll|example\.test/u)
+})
+
+test('normalizes generated Markdown in visible table text', () => {
+  const result = validate({
+    ac: validAc({
+      criteria: [{
+        status: 'partial',
+        criterion: 'State | persists\n[after refresh](https://example.test)',
+        notes: 'The `completed` state\nis not restored',
+        evidence: 'src/App.jsx contains the relevant state restoration branch',
+      }],
+    }),
+  })
+
+  assert.equal(result.status, 0, result.stderr)
+  assert.match(result.report, /\| ⚠️ \| State \\\| persists after refresh \| The completed state is not restored \|/u)
+})
+
 test('computes a yellow verdict when a criterion has a gap', () => {
   const result = validate({
     ac: validAc({

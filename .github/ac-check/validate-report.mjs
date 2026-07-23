@@ -30,11 +30,21 @@ function requireKeys(value, expected, context) {
 
 function requireString(value, context, maxLength) {
   if (typeof value !== 'string') fail(`${context} must be a string`)
-  if (value !== value.trim() || value.length === 0) fail(`${context} must be non-empty and trimmed`)
+  if (value.trim().length === 0) fail(`${context} must be non-empty`)
   if (value.length > maxLength) fail(`${context} exceeds ${maxLength} characters`)
-  if (/\r|\n|\||```|\]\(|https?:\/\//u.test(value)) {
-    fail(`${context} contains forbidden Markdown, a link, or a line break`)
-  }
+}
+
+function inlineText(value, maxLength) {
+  const plain = value
+    .replace(/\[([^\]]+)\]\([^)]*\)/gu, '$1')
+    .replace(/```(?:[a-z0-9_-]+)?/giu, '')
+    .replace(/`/gu, '')
+    .replace(/\s+/gu, ' ')
+    .trim()
+  const shortened = plain.length <= maxLength
+    ? plain
+    : `${plain.slice(0, maxLength - 1).trimEnd()}…`
+  return shortened.replace(/\|/gu, '\\|')
 }
 
 function requireLine(value, context) {
@@ -66,7 +76,7 @@ function parseResult(path) {
 const ac = parseResult(acPath)
 
 requireKeys(ac, ['summary', 'criteria', 'risks'], 'AC root')
-requireString(ac.summary, 'summary', 240)
+requireString(ac.summary, 'summary', 4_000)
 
 if (!Array.isArray(ac.criteria) || ac.criteria.length > 25) {
   fail('criteria must be an array with at most 25 items')
@@ -77,21 +87,21 @@ for (const [index, criterion] of ac.criteria.entries()) {
   const context = `criteria[${index}]`
   requireKeys(criterion, ['status', 'criterion', 'notes', 'evidence'], context)
   if (!statuses.has(criterion.status)) fail(`${context}.status is invalid`)
-  requireString(criterion.criterion, `${context}.criterion`, 120)
+  requireString(criterion.criterion, `${context}.criterion`, 2_000)
 
   if (criterion.status === 'met') {
     if (criterion.notes !== '') fail(`${context}.notes must be empty when status is met`)
   } else {
-    requireString(criterion.notes, `${context}.notes`, 240)
+    requireString(criterion.notes, `${context}.notes`, 4_000)
   }
-  requireString(criterion.evidence, `${context}.evidence`, 300)
+  requireString(criterion.evidence, `${context}.evidence`, 8_000)
 }
 
 if (!Array.isArray(ac.risks) || ac.risks.length > 4) {
   fail('risks must be an array with at most 4 items')
 }
 for (const [index, risk] of ac.risks.entries()) {
-  requireString(risk, `risks[${index}]`, 180)
+  requireString(risk, `risks[${index}]`, 4_000)
 }
 
 const bugReport = parseResult(bugsPath)
@@ -107,9 +117,9 @@ for (const [index, bug] of bugReport.bugs.entries()) {
   requireKeys(bug, ['file', 'line', 'trigger', 'description', 'evidence'], context)
   requireString(bug.file, `${context}.file`, 240)
   requireLine(bug.line, `${context}.line`)
-  requireString(bug.trigger, `${context}.trigger`, 240)
-  requireString(bug.description, `${context}.description`, 240)
-  requireString(bug.evidence, `${context}.evidence`, 300)
+  requireString(bug.trigger, `${context}.trigger`, 4_000)
+  requireString(bug.description, `${context}.description`, 4_000)
+  requireString(bug.evidence, `${context}.evidence`, 8_000)
   if (!files.has(bug.file)) fail(`${context}.file is not present in ${filesPath}`)
 }
 
@@ -123,7 +133,7 @@ const statusEmoji = {
   not_verifiable: '❓',
 }
 
-const lines = [`${acVerdict} **${ac.summary}**`, '']
+const lines = [`${acVerdict} **${inlineText(ac.summary, 240)}**`, '']
 
 if (ac.criteria.length === 0) {
   lines.push('_No concrete acceptance criteria could be derived from the supplied ticket._')
@@ -132,7 +142,7 @@ if (ac.criteria.length === 0) {
     '| Status | Acceptance criterion | Notes |',
     '|:------:|----------------------|-------|',
     ...ac.criteria.map(({ status, criterion, notes }) =>
-      `| ${statusEmoji[status]} | ${criterion} | ${notes} |`,
+      `| ${statusEmoji[status]} | ${inlineText(criterion, 120)} | ${notes === '' ? '' : inlineText(notes, 240)} |`,
     ),
   )
 }
@@ -140,12 +150,12 @@ if (ac.criteria.length === 0) {
 if (hasBug) {
   lines.push('', '**Bugs**')
   for (const { file, line, description } of bugReport.bugs) {
-    lines.push(`- 🔴 ${description} — \`${file}${line === null ? '' : `:${line}`}\``)
+    lines.push(`- 🔴 ${inlineText(description, 240)} — \`${file}${line === null ? '' : `:${line}`}\``)
   }
 }
 
 if (ac.risks.length > 0) {
-  lines.push('', `**Risks:** ${ac.risks.join('; ')}`)
+  lines.push('', `**Risks:** ${ac.risks.map((risk) => inlineText(risk, 180)).join('; ')}`)
 }
 
 lines.push('', '_Preliminary automated check — not a substitute for review or testing._', '')
