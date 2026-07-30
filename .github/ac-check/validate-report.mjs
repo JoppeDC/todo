@@ -3,10 +3,11 @@ import fs from 'node:fs'
 import { parseAgentResponse } from './parse-response.mjs'
 
 const [
-  acPath = 'ac-response.txt',
-  bugsPath = 'bugs-response.txt',
+  responsePath = 'finalize-response.txt',
   outputPath = 'ac-report.md',
   filesPath = 'files.txt',
+  rulesPath = 'rules.md',
+  droppedPath = 'ac-dropped.md',
 ] = process.argv.slice(2)
 
 function fail(message) {
@@ -65,6 +66,15 @@ function changedFiles(path) {
   return files
 }
 
+function ruleIds(path) {
+  const ids = new Set()
+  for (const line of fs.readFileSync(path, 'utf8').split('\n')) {
+    const match = line.match(/^##\s+(.+?)\s*$/u)
+    if (match) ids.add(match[1])
+  }
+  return ids
+}
+
 function parseResult(path) {
   try {
     return parseAgentResponse(fs.readFileSync(path, 'utf8').trim())
@@ -73,17 +83,17 @@ function parseResult(path) {
   }
 }
 
-const ac = parseResult(acPath)
+const report = parseResult(responsePath)
 
-requireKeys(ac, ['summary', 'criteria', 'risks'], 'AC root')
-requireString(ac.summary, 'summary', 4_000)
+requireKeys(report, ['summary', 'criteria', 'risks', 'bugs', 'dropped'], 'report root')
+requireString(report.summary, 'summary', 4_000)
 
-if (!Array.isArray(ac.criteria) || ac.criteria.length > 25) {
+if (!Array.isArray(report.criteria) || report.criteria.length > 25) {
   fail('criteria must be an array with at most 25 items')
 }
 
 const statuses = new Set(['met', 'partial', 'missing', 'not_verifiable'])
-for (const [index, criterion] of ac.criteria.entries()) {
+for (const [index, criterion] of report.criteria.entries()) {
   const context = `criteria[${index}]`
   requireKeys(criterion, ['status', 'criterion', 'notes', 'evidence'], context)
   if (!statuses.has(criterion.status)) fail(`${context}.status is invalid`)
@@ -97,22 +107,19 @@ for (const [index, criterion] of ac.criteria.entries()) {
   requireString(criterion.evidence, `${context}.evidence`, 8_000)
 }
 
-if (!Array.isArray(ac.risks) || ac.risks.length > 4) {
+if (!Array.isArray(report.risks) || report.risks.length > 4) {
   fail('risks must be an array with at most 4 items')
 }
-for (const [index, risk] of ac.risks.entries()) {
+for (const [index, risk] of report.risks.entries()) {
   requireString(risk, `risks[${index}]`, 4_000)
 }
 
-const bugReport = parseResult(bugsPath)
-
-requireKeys(bugReport, ['bugs'], 'bug root')
-if (!Array.isArray(bugReport.bugs) || bugReport.bugs.length > 25) {
+if (!Array.isArray(report.bugs) || report.bugs.length > 25) {
   fail('bugs must be an array with at most 25 items')
 }
 
 const files = changedFiles(filesPath)
-for (const [index, bug] of bugReport.bugs.entries()) {
+for (const [index, bug] of report.bugs.entries()) {
   const context = `bugs[${index}]`
   requireKeys(bug, ['file', 'line', 'trigger', 'description', 'evidence'], context)
   requireString(bug.file, `${context}.file`, 240)
@@ -123,8 +130,27 @@ for (const [index, bug] of bugReport.bugs.entries()) {
   if (!files.has(bug.file)) fail(`${context}.file is not present in ${filesPath}`)
 }
 
-const hasBug = bugReport.bugs.length > 0
-const hasGap = ac.criteria.length === 0 || ac.criteria.some(({ status }) => status !== 'met')
+const rules = ruleIds(rulesPath)
+if (!Array.isArray(report.dropped) || report.dropped.length > 50) {
+  fail('dropped must be an array with at most 50 items')
+}
+for (const [index, entry] of report.dropped.entries()) {
+  const context = `dropped[${index}]`
+  requireKeys(entry, ['kind', 'rule', 'reason'], context)
+  if (entry.kind !== 'criterion' && entry.kind !== 'bug') {
+    fail(`${context}.kind must be 'criterion' or 'bug'`)
+  }
+  if (entry.rule !== null) {
+    requireString(entry.rule, `${context}.rule`, 200)
+    if (!rules.has(entry.rule)) {
+      fail(`${context}.rule '${entry.rule}' does not match any rule in ${rulesPath}`)
+    }
+  }
+  requireString(entry.reason, `${context}.reason`, 4_000)
+}
+
+const hasBug = report.bugs.length > 0
+const hasGap = report.criteria.length === 0 || report.criteria.some(({ status }) => status !== 'met')
 const acVerdict = hasGap ? '🟡' : '🟢'
 const statusEmoji = {
   met: '✅',
@@ -133,15 +159,15 @@ const statusEmoji = {
   not_verifiable: '❓',
 }
 
-const lines = [`${acVerdict} **${inlineText(ac.summary, 240)}**`, '']
+const lines = [`${acVerdict} **${inlineText(report.summary, 240)}**`, '']
 
-if (ac.criteria.length === 0) {
+if (report.criteria.length === 0) {
   lines.push('_No concrete acceptance criteria could be derived from the supplied ticket._')
 } else {
   lines.push(
     '| Status | Acceptance criterion | Notes |',
     '|:------:|----------------------|-------|',
-    ...ac.criteria.map(({ status, criterion, notes }) =>
+    ...report.criteria.map(({ status, criterion, notes }) =>
       `| ${statusEmoji[status]} | ${inlineText(criterion, 120)} | ${notes === '' ? '' : inlineText(notes, 240)} |`,
     ),
   )
@@ -149,27 +175,42 @@ if (ac.criteria.length === 0) {
 
 if (hasBug) {
   lines.push('', '**Bugs**')
-  for (const { file, line, description } of bugReport.bugs) {
+  for (const { file, line, description } of report.bugs) {
     lines.push(`- 🔴 ${inlineText(description, 240)} — \`${file}${line === null ? '' : `:${line}`}\``)
   }
 }
 
-if (ac.risks.length > 0) {
-  lines.push('', `**Risks:** ${ac.risks.map((risk) => inlineText(risk, 180)).join('; ')}`)
+if (report.risks.length > 0) {
+  lines.push('', `**Risks:** ${report.risks.map((risk) => inlineText(risk, 180)).join('; ')}`)
 }
 
 lines.push('', '_Preliminary automated check — not a substitute for review or testing._', '')
 
-const report = lines.join('\n')
-if (Buffer.byteLength(report, 'utf8') > 55_000) fail('rendered report exceeds 55 KB')
+const rendered = lines.join('\n')
+if (Buffer.byteLength(rendered, 'utf8') > 55_000) fail('rendered report exceeds 55 KB')
 
-fs.writeFileSync(outputPath, report)
+fs.writeFileSync(outputPath, rendered)
 
-// In CI the workflow's enforcement step reads these; locally GITHUB_OUTPUT is unset.
+const droppedLines = report.dropped.length === 0 ? [] : [
+  '',
+  '**Dropped in verification**',
+  '',
+  '| Kind | Rule | Reason |',
+  '|------|------|--------|',
+  ...report.dropped.map(({ kind, rule, reason }) =>
+    `| ${kind} | ${rule === null ? 'verification' : inlineText(rule, 80)} | ${inlineText(reason, 240)} |`,
+  ),
+  '',
+]
+fs.writeFileSync(droppedPath, droppedLines.join('\n'))
+
+// The workflow reads these: the comment footer renders the dropped count, and
+// the enforce step gates on all_met / has_bugs — a deliberate divergence from
+// cf-ai-workflow, which reports without gating.
 if (process.env.GITHUB_OUTPUT) {
   fs.appendFileSync(
     process.env.GITHUB_OUTPUT,
-    `all_met=${hasGap ? 'false' : 'true'}\nhas_bugs=${hasBug ? 'true' : 'false'}\n`,
+    `dropped=${report.dropped.length}\nall_met=${hasGap ? 'false' : 'true'}\nhas_bugs=${hasBug ? 'true' : 'false'}\n`,
   )
 }
-console.log(`Validated ${ac.criteria.length} criteria and ${bugReport.bugs.length} bugs; AC verdict ${acVerdict}`)
+console.log(`Validated ${report.criteria.length} criteria, ${report.bugs.length} bugs, ${report.dropped.length} dropped; AC verdict ${acVerdict}`)

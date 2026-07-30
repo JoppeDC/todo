@@ -23,6 +23,7 @@ jobs:
     outputs:
       ticket: ${{ steps.ticket.outputs.key }}
       has_report: ${{ steps.report.outputs.has_report }}
+      dropped_findings: ${{ steps.report.outputs.dropped }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -100,7 +101,7 @@ jobs:
         run: |
           set +e
           copilot --agent ac-review \
-            -p "Run your acceptance-criteria check on the PR in the current working directory." \
+            -p "Run your acceptance-criteria analysis on the PR in the current working directory." \
             -s \
             --available-tools='view,grep,glob' \
             --disable-builtin-mcps \
@@ -109,17 +110,13 @@ jobs:
             --no-custom-instructions \
             --no-remote \
             --no-remote-export \
-            > ac-response.txt 2> ac-output.log
+            > ac-analysis.md 2> ac-output.log
           status=$?
           set -e
           if [ "$status" -ne 0 ]; then
             echo "::error::Copilot CLI (ac-review) exited with status $status — see ac-output.log artifact"
             exit "$status"
           fi
-
-      - name: Extract AC findings for bug hunt
-        if: steps.jira.outputs.has_content == 'true' && steps.diff.outputs.has_diff == 'true'
-        run: node .github/ac-check/extract-criteria.mjs ac-response.txt ac-findings.json
 
       - name: Run bug hunt agent
         if: steps.jira.outputs.has_content == 'true' && steps.diff.outputs.has_diff == 'true'
@@ -138,7 +135,7 @@ jobs:
             --no-custom-instructions \
             --no-remote \
             --no-remote-export \
-            > bugs-response.txt 2> bugs-output.log
+            > bugs-analysis.md 2> bugs-output.log
           status=$?
           set -e
           if [ "$status" -ne 0 ]; then
@@ -146,23 +143,69 @@ jobs:
             exit "$status"
           fi
 
-      - name: Validate and render report
+      - name: Run finalize agent and validate report
         id: report
         if: steps.jira.outputs.has_content == 'true' && steps.diff.outputs.has_diff == 'true'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          COPILOT_GITHUB_TOKEN: ${{ github.token }}
         run: |
-          # validate-report.mjs also appends all_met and has_bugs to GITHUB_OUTPUT
-          node .github/ac-check/validate-report.mjs ac-response.txt bugs-response.txt ac-report.md files.txt
+          # The review rules are trusted instructions appended to the finalize
+          # definition before the agent runs, mirroring run-local.sh.
+          {
+            echo
+            cat .github/ac-check/rules.md
+          } >> .github/agents/finalize.agent.md
+          run_finalize() {
+            set +e
+            copilot --agent finalize \
+              -p "Verify the analyses in the current working directory and produce the final report for the PR." \
+              -s \
+              --available-tools='view,grep,glob' \
+              --disable-builtin-mcps \
+              --no-ask-user \
+              --no-auto-update \
+              --no-custom-instructions \
+              --no-remote \
+              --no-remote-export \
+              > finalize-response.txt 2> finalize-output.log
+            status=$?
+            set -e
+            if [ "$status" -ne 0 ]; then
+              echo "::error::Copilot CLI (finalize) exited with status $status — see finalize-output.log artifact"
+              exit "$status"
+            fi
+          }
+          validate() {
+            # validate-report.mjs also appends dropped, all_met, and has_bugs to GITHUB_OUTPUT
+            node .github/ac-check/validate-report.mjs \
+              finalize-response.txt \
+              ac-report.md \
+              files.txt \
+              .github/ac-check/rules.md \
+              ac-dropped.md
+          }
+          run_finalize
+          if ! validate; then
+            echo "::warning::finalize response failed validation; retrying once"
+            run_finalize
+            validate
+          fi
           echo "has_report=true" >> "$GITHUB_OUTPUT"
 
       - name: Publish job summary
         if: steps.report.outputs.has_report == 'true'
         env:
           TICKET: ${{ steps.ticket.outputs.key }}
+          DROPPED: ${{ steps.report.outputs.dropped }}
         run: |
           {
             echo "## AC Check — [$TICKET]($JIRA_BASE_URL/browse/$TICKET)"
             echo
             cat ac-report.md
+            cat ac-dropped.md
+            echo
+            echo "_$DROPPED findings dropped in verification_"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload report
@@ -184,12 +227,14 @@ jobs:
             ticket.md
             diff.patch
             files.txt
-            ac-response.txt
+            ac-analysis.md
             ac-output.log
-            ac-findings.json
-            bugs-response.txt
+            bugs-analysis.md
             bugs-output.log
+            finalize-response.txt
+            finalize-output.log
             ac-report.md
+            ac-dropped.md
           if-no-files-found: ignore
           retention-days: 7
 
@@ -226,6 +271,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.pull_request.number }}
           TICKET: ${{ needs.analyze.outputs.ticket }}
+          DROPPED: ${{ needs.analyze.outputs.dropped_findings }}
         run: |
           marker="<!-- ac-check-report -->"
           {
@@ -233,6 +279,8 @@ jobs:
             echo "## 🤖 AC Check — [$TICKET]($JIRA_BASE_URL/browse/$TICKET)"
             echo
             cat ac-report.md
+            echo
+            echo "_$DROPPED findings dropped in verification_"
           } > comment.md
           cid=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR/comments" --paginate \
             --jq ".[] | select(.body | startswith(\"$marker\")) | .id" | head -1)
