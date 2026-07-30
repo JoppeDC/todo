@@ -7,8 +7,9 @@
 #             current branch name, same as CI)
 #
 # Requires JIRA_API_TOKEN in the environment and an authenticated copilot CLI.
-# Writes ticket.md, diff.patch, files.txt, agent responses, and ac-report.md
-# into the current directory for inspection.
+# Writes ticket.md, diff.patch, files.txt, the agent analyses, the finalize
+# response, ac-report.md, and ac-dropped.md into the current directory for
+# inspection.
 set -euo pipefail
 
 BASE=${1:-origin/main}
@@ -29,10 +30,18 @@ agents_dir=$(cd "$script_dir/../agents" && pwd)
 
 # --agent is name-based and only searches ./.github/agents and
 # ~/.copilot/agents; the repo under test has no project-level copy, so keep
-# user-level symlinks pointing at this repo's agent definitions.
+# user-level symlinks pointing at this repo's agent definitions. The finalize
+# definition is a generated copy because the review rules are appended to it,
+# exactly as CI's finalize step does.
 mkdir -p ~/.copilot/agents
 ln -sf "$agents_dir/ac-review.agent.md" ~/.copilot/agents/ac-review.agent.md
 ln -sf "$agents_dir/bug-hunt.agent.md" ~/.copilot/agents/bug-hunt.agent.md
+rm -f ~/.copilot/agents/finalize.agent.md
+{
+  cat "$agents_dir/finalize.agent.md"
+  echo
+  cat "$script_dir/rules.md"
+} > ~/.copilot/agents/finalize.agent.md
 
 status=$(curl -sS -u "$JIRA_EMAIL:$JIRA_API_TOKEN" -o ticket.json -w "%{http_code}" \
   "$JIRA_BASE_URL/rest/api/2/issue/$TICKET?fields=summary,description,customfield_10038")
@@ -62,9 +71,21 @@ run_agent() {
     > "$out" 2> "$log"
 }
 
-run_agent ac-review "Run your acceptance-criteria check on the PR in the current working directory." ac-response.txt ac-output.log
-node "$script_dir/extract-criteria.mjs" ac-response.txt ac-findings.json
-run_agent bug-hunt "Run your bug hunt on the PR in the current working directory." bugs-response.txt bugs-output.log
+validate() {
+  node "$script_dir/validate-report.mjs" finalize-response.txt ac-report.md files.txt "$script_dir/rules.md" ac-dropped.md
+}
 
-node "$script_dir/validate-report.mjs" ac-response.txt bugs-response.txt ac-report.md files.txt
+finalize_prompt="Verify the analyses in the current working directory and produce the final report for the PR."
+
+run_agent ac-review "Run your acceptance-criteria analysis on the PR in the current working directory." ac-analysis.md ac-output.log
+run_agent bug-hunt "Run your bug hunt on the PR in the current working directory." bugs-analysis.md bugs-output.log
+
+run_agent finalize "$finalize_prompt" finalize-response.txt finalize-output.log
+if ! validate; then
+  echo "finalize response failed validation; retrying once" >&2
+  run_agent finalize "$finalize_prompt" finalize-response.txt finalize-output.log
+  validate
+fi
+
 cat ac-report.md
+cat ac-dropped.md
