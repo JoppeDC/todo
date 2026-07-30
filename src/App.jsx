@@ -3,11 +3,17 @@ import { useMemo, useState } from 'react'
 function App() {
   const [todos, setTodos] = useState([])
   const [newTodo, setNewTodo] = useState('')
+  const [filter, setFilter] = useState('all')
 
   const activeCount = useMemo(
     () => todos.filter((todo) => !todo.completed).length,
     [todos],
   )
+
+  const visibleTodos = todos.filter((todo) => {
+    if (filter === 'all') return true
+    return filter === 'open' ? !todo.completed : todo.completed
+  })
 
   function addTodo(event) {
     event.preventDefault()
@@ -62,10 +68,26 @@ function App() {
 
         <div className="list-toolbar">
           <p>{activeCount === 1 ? '1 thing left' : `${activeCount} things left`}</p>
+          <div className="filters" aria-label="Filter tasks">
+            {[
+              ['all', 'All'],
+              ['open', 'Open'],
+              ['finished', 'Finished'],
+            ].map(([value, label]) => (
+              <button
+                className={filter === value ? 'selected' : ''}
+                key={value}
+                type="button"
+                onClick={() => setFilter(value)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
         </div>
 
         <ul className="todo-list" aria-live="polite">
-          {todos.map((todo) => (
+          {visibleTodos.map((todo) => (
             <li className={todo.completed ? 'completed' : ''} key={todo.id}>
               <label>
                 <input
@@ -86,7 +108,7 @@ function App() {
               </button>
             </li>
           ))}
-          {todos.length === 0 && (
+          {visibleTodos.length === 0 && (
             <li className="empty-state">Nothing here — enjoy the breathing room.</li>
           )}
         </ul>
